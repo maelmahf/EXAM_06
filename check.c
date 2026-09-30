@@ -5,10 +5,17 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-char rbuf[1001] , wbuf[64];
+fd_set afds , wfds , rfds;
 char *bufs[FD_SETSIZE];
-int   ids[FD_SETSIZE] , next_id , max_fd;
-fd_set afds , wfds , rfds
+int ids[FD_SETSIZE] , max_fd , next_id;
+char rbuf[1001] , wbuf[64];
+
+void send_all(int form , char *s)
+{
+    for(int fd = 0 ; fd <= max_fd ; fd++)
+        if(FD_ISSET(fd , &wfds) && fd != form)
+            send(fd , s , strlen(s) , MSG_NOSIGNAL);
+}
 
 
 int extract_message(char **buf, char **msg)
@@ -59,7 +66,7 @@ char *str_join(char *buf, char *add)
 }
 
 
-int main() {
+int main(int ac , char **av) {
 	int sockfd, connfd;
 	struct sockaddr_in servaddr; 
 
@@ -76,7 +83,7 @@ int main() {
 	// assign IP, PORT 
 	servaddr.sin_family = AF_INET; 
 	servaddr.sin_addr.s_addr = htonl(2130706433); //127.0.0.1
-	servaddr.sin_port = htons(8081); 
+	servaddr.sin_port = htons(atoi(av[1])); 
   
 	// Binding newly created socket to given IP and verification 
 	if ((bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr))) != 0) { 
@@ -93,18 +100,19 @@ int main() {
     FD_ZERO(&afds);
     FD_SET(sockfd , &afds);
     max_fd = sockfd;
+
     while(1)
     {
-        wfds = rfds = afds;
-        if(select(max_fd + 1 , &rfds , &wfds , 0 , 0) < 0)
+        rfds = wfds = afds;
+        if(select(max_fd + 1 , &rfds , &wfds , 0 , 0 ) < 0)
             continue;
-        for(int fd = 0 ; fd <= max_fd; fd++)
+        for(int fd = 0 ; fd <= max_fd ; fd++)
         {
-            if(!FD_ISSET(fd , &rfds))
+            if(!(FD_ISSET(fd , &rfds)))
                 continue;
             if(fd == sockfd)
             {
-                connfd = accept(sockfd , 0 , 0);
+                connfd = accept(sockfd , 0, 0);
                 if(connfd < 0)
                     continue;
                 if(connfd >= FD_SETSIZE)
@@ -118,12 +126,12 @@ int main() {
                 bufs[connfd] = 0;
                 FD_SET(connfd , &afds);
                 sprintf(wbuf , "server: client %d just arrived\n" , ids[connfd]);
-                send_all(connfd , wbuf)
+                send_all(connfd , wbuf);
             }
             else
             {
-                int r = recv(fd , rbuf , sizeof(rbuf) - 1 , 0 );
-                if(r <= 0)
+                int r = recv(fd , rbuf , sizeof(rbuf) -1 , 0);
+                if (r <= 0)
                 {
                     sprintf(wbuf , "server: client %d just left\n" , ids[fd]);
                     FD_CLR(fd , &afds);
@@ -136,26 +144,22 @@ int main() {
                 {
                     rbuf[r] = 0;
                     if(!(bufs[fd] = str_join(bufs[fd] , rbuf)))
-                    {
-                        write(2 ,"Fatal error\n" , 12);
-                        exit(1);
-                    }
+                        fatal();
                     char *line;
                     int ret;
-                    sprintf(wbuf , "client %d: " ids[fd]);
+                    sprintf(wbuf , "client %d: " , ids[fd]);
                     while((ret = extract_message(&bufs[fd] , &line)) == 1)
                     {
                         send_all(fd , wbuf);
                         send_all(fd , line);
                         free(line);
                     }
-                    if(ret == -1)
-                    {
-                        write(2 ,"Fatal error\n" , 12);
-                        exit(1);
-                    }
-                } 
+                    if (ret == -1)
+                        fatal();
+
+                }
             }
         }
     }
+
 }
